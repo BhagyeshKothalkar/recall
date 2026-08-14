@@ -14,27 +14,21 @@ use crate::domain::{GenerationRequest, MemoryId, Relevance, RetrievedMemory, Sea
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AskRequest {
     question: String,
-    use_ai: bool,
 }
 
 impl AskRequest {
     /// Creates an ask request, rejecting an empty question.
-    pub fn new(question: String, use_ai: bool) -> Result<Self, AskRequestError> {
+    pub fn new(question: String) -> Result<Self, AskRequestError> {
         if question.trim().is_empty() {
             Err(AskRequestError::EmptyQuestion)
         } else {
-            Ok(Self { question, use_ai })
+            Ok(Self { question })
         }
     }
 
     /// Returns the user's question.
     pub fn question(&self) -> &str {
         &self.question
-    }
-
-    /// Returns whether generation should be performed after retrieval.
-    pub const fn use_ai(&self) -> bool {
-        self.use_ai
     }
 }
 
@@ -77,15 +71,6 @@ impl Answer {
     pub fn sources(&self) -> &[MemoryId] {
         &self.sources
     }
-}
-
-/// Result of a Recall question after retrieval.
-#[derive(Clone, Debug, PartialEq)]
-pub enum AskResult {
-    /// Retrieved memories were passed to the inference backend and an answer was generated.
-    Answer(Answer),
-    /// Retrieved memories were requested without invoking inference.
-    Retrieved(Vec<crate::domain::SearchResult>),
 }
 
 /// Errors produced by the ask use case.
@@ -143,13 +128,11 @@ where
         })
     }
 
-    /// Retrieves memories and follows the request's AI mode.
-    pub fn execute(&self, request: AskRequest) -> Result<AskResult, AskError> {
-        let results = self.retrieve(&request)?;
-        if !request.use_ai() {
-            return Ok(AskResult::Retrieved(results));
-        }
-
+    /// Retrieves relevant memories and generates an answer from that context.
+    pub fn execute(&self, request: AskRequest) -> Result<Answer, AskError> {
+        let query = SearchQuery::new(request.question().to_owned(), self.retrieval_limit)
+            .map_err(|_| AskError::InvalidGenerationRequest)?;
+        let results = self.searcher.search(&query).map_err(AskError::Search)?;
         let context = results
             .iter()
             .map(|result| {
@@ -167,13 +150,7 @@ where
             .map_err(AskError::Inference)?;
 
         let sources = generation.source_ids();
-        Ok(AskResult::Answer(Answer::new(response.text().to_owned(), sources)))
-    }
-
-    fn retrieve(&self, request: &AskRequest) -> Result<Vec<crate::domain::SearchResult>, AskError> {
-        let query = SearchQuery::new(request.question().to_owned(), self.retrieval_limit)
-            .map_err(|_| AskError::InvalidGenerationRequest)?;
-        self.searcher.search(&query).map_err(AskError::Search)
+        Ok(Answer::new(response.text().to_owned(), sources))
     }
 }
 
@@ -252,34 +229,13 @@ mod tests {
         let ask = AskRecall::new(Searcher { memory }, &inference, 5).unwrap();
 
         let answer = ask
-            .execute(AskRequest::new("how does Rust manage memory?".to_owned(), true).unwrap())
+            .execute(AskRequest::new("how does Rust manage memory?".to_owned()).unwrap())
             .unwrap();
 
-        let AskResult::Answer(answer) = answer else {
-            panic!("expected generated answer");
-        };
         assert_eq!(answer.text(), "answer");
         assert_eq!(answer.sources(), &[id]);
         let seen = inference.seen.borrow();
         assert_eq!(seen.as_ref().unwrap().source_ids(), vec![id]);
-    }
-
-    #[test]
-    fn no_ai_returns_retrieved_memories_without_invoking_inference() {
-        let inference = Inference {
-            seen: std::cell::RefCell::new(None),
-        };
-        let ask = AskRecall::new(Searcher { memory: memory() }, &inference, 5).unwrap();
-
-        let result = ask
-            .execute(AskRequest::new("how does Rust manage memory?".to_owned(), false).unwrap())
-            .unwrap();
-
-        let AskResult::Retrieved(results) = result else {
-            panic!("expected retrieval-only result");
-        };
-        assert_eq!(results.len(), 1);
-        assert!(inference.seen.borrow().is_none());
     }
 
     #[test]
