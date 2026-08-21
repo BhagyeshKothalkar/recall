@@ -118,10 +118,3 @@ This includes the local database and daemon socket.
 
 Recall is a personal project focused on building a useful, local-first memory system with a clean separation between memory storage, retrieval, AI generation, and the command-line interface.
 
----
-
-## Disclaimer
-
-**This is a personal project and is completely AI-assisted.**
-
-The implementation, architecture, debugging, documentation, and development process were carried out with substantial assistance from AI. This project is not presented as a commercial product or as independently authored software.
