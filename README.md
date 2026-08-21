@@ -79,7 +79,7 @@ recall --help
 Start Recall:
 
 ```bash
-recall start
+recall daemon
 ```
 
 ## Ollama
