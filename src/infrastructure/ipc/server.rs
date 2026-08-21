@@ -99,7 +99,7 @@ impl<'a> IpcServer<'a> {
                 },
                 Err(error) => Response::Error(error),
             },
-            Request::Ask(request) => match AskRequest::new(request.question) {
+            Request::Ask(request) => match AskRequest::new(request.question, request.use_ai) {
                 Ok(request) => match self.ask.execute(request) {
                     Ok(answer) => Response::Answer(super::protocol::AnswerResponse {
                         text: answer.text().to_owned(),

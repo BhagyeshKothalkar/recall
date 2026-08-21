@@ -14,16 +14,21 @@ use crate::domain::{GenerationRequest, MemoryId, Relevance, RetrievedMemory, Sea
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AskRequest {
     question: String,
+    use_ai: bool,
 }
 
 impl AskRequest {
     /// Creates an ask request, rejecting an empty question.
-    pub fn new(question: String) -> Result<Self, AskRequestError> {
+    pub fn new(question: String, use_ai: bool) -> Result<Self, AskRequestError> {
         if question.trim().is_empty() {
             Err(AskRequestError::EmptyQuestion)
         } else {
-            Ok(Self { question })
+            Ok(Self { question, use_ai })
         }
+    }
+
+    pub fn use_ai(&self) -> bool {
+        self.use_ai
     }
 
     /// Returns the user's question.
@@ -142,6 +147,18 @@ where
             })
             .collect::<Result<Vec<_>, _>>()?;
 
+        if !request.use_ai() {
+            let text = context
+                .iter()
+                .map(|memory| memory.memory().content())
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            let sources = context.iter().map(|memory| memory.memory().id()).collect();
+
+            return Ok(Answer::new(text, sources));
+        }
+
         let generation = GenerationRequest::new(request.question().to_owned(), context)
             .ok_or(AskError::InvalidGenerationRequest)?;
         let response = self
@@ -239,7 +256,7 @@ mod tests {
         let ask = AskRecall::new(Searcher { memory }, &inference, 5).unwrap();
 
         let answer = ask
-            .execute(AskRequest::new("how does Rust manage memory?".to_owned()).unwrap())
+            .execute(AskRequest::new("how does Rust manage memory?".to_owned(), true).unwrap())
             .unwrap();
 
         assert_eq!(answer.text(), "answer");
