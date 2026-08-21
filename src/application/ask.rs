@@ -164,7 +164,9 @@ pub enum AskConfigError {
 impl fmt::Display for AskConfigError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ZeroRetrievalLimit => formatter.write_str("retrieval limit must be greater than zero"),
+            Self::ZeroRetrievalLimit => {
+                formatter.write_str("retrieval limit must be greater than zero")
+            }
         }
     }
 }
@@ -174,14 +176,19 @@ impl std::error::Error for AskConfigError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{GenerationResponse, Memory, MemoryId, MemorySource, SearchScore, Timestamp};
+    use crate::domain::{
+        GenerationResponse, Memory, MemoryId, MemorySource, SearchScore, Timestamp,
+    };
 
     struct Searcher {
         memory: Memory,
     }
 
     impl MemorySearcher for Searcher {
-        fn search(&self, _query: &SearchQuery) -> Result<Vec<crate::domain::SearchResult>, SearchError> {
+        fn search(
+            &self,
+            _query: &SearchQuery,
+        ) -> Result<Vec<crate::domain::SearchResult>, SearchError> {
             Ok(vec![crate::domain::SearchResult::new(
                 self.memory.clone(),
                 SearchScore::new(0.75).unwrap(),
@@ -194,7 +201,10 @@ mod tests {
     }
 
     impl InferenceBackend for &Inference {
-        fn generate(&self, request: &GenerationRequest) -> Result<GenerationResponse, InferenceError> {
+        fn generate(
+            &self,
+            request: &GenerationRequest,
+        ) -> Result<GenerationResponse, InferenceError> {
             self.seen.borrow_mut().replace(request.clone());
             Ok(GenerationResponse::new("answer".to_owned()).unwrap())
         }
