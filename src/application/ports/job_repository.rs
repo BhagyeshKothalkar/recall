@@ -1,5 +1,7 @@
 //! Port for durable background-job persistence and claiming.
 
+use std::fmt;
+
 use crate::domain::{Job, JobId, JobState, Timestamp};
 
 /// Failure returned by a background-job repository.

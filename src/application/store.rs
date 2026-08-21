@@ -215,7 +215,12 @@ mod tests {
             .execute(StoreInput::Text("hello".to_owned()))
             .unwrap();
 
-        let memory = store.memories.borrow().get(&response.memory_id()).cloned().unwrap();
+        let memory = store
+            .memories
+            .borrow()
+            .get(&response.memory_id())
+            .cloned()
+            .unwrap();
         assert_eq!(memory.content(), "hello");
         assert_eq!(memory.source(), &MemorySource::DirectInput);
         assert_eq!(response.content_length(), 5);
