@@ -24,6 +24,14 @@ impl SqliteStorePersistence {
             .map_err(|error| DatabaseError::Migration(Box::new(error)))?;
         Ok(Self { database })
     }
+
+    /// Creates an isolated store persistence database for tests.
+    pub fn in_memory() -> Result<Self, DatabaseError> {
+        let database = DatabaseConnection::in_memory()?;
+        Migrator::apply(database.connection())
+            .map_err(|error| DatabaseError::Migration(Box::new(error)))?;
+        Ok(Self { database })
+    }
 }
 
 impl StorePersistence for SqliteStorePersistence {
@@ -42,7 +50,8 @@ impl StorePersistence for SqliteStorePersistence {
                 memory.created_at().as_unix_millis(),
                 memory.updated_at().as_unix_millis(),
             ],
-        ).map_err(storage_error)?;
+        )
+        .map_err(storage_error)?;
 
         let JobKind::GenerateEmbedding { memory_id } = job.kind();
         tx.execute(
@@ -75,6 +84,85 @@ fn storage_error(error: rusqlite::Error) -> StorePersistenceError {
 
 impl fmt::Debug for SqliteStorePersistence {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.debug_struct("SqliteStorePersistence").finish_non_exhaustive()
+        formatter
+            .debug_struct("SqliteStorePersistence")
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{JobId, MemoryId, MemorySource, Timestamp};
+
+    #[test]
+    fn persists_memory_and_job_in_one_database() {
+        let persistence = SqliteStorePersistence::in_memory().unwrap();
+        let timestamp = Timestamp::from_unix_millis(10);
+        let memory = Memory::new(
+            MemoryId::new(),
+            "hello".to_owned(),
+            MemorySource::DirectInput,
+            timestamp,
+            timestamp,
+        )
+        .unwrap();
+        let job = Job::new(
+            JobId::new(),
+            JobKind::GenerateEmbedding {
+                memory_id: memory.id(),
+            },
+            timestamp,
+        );
+
+        persistence.persist(&memory, &job).unwrap();
+
+        let connection = persistence.database.connection();
+        let memory_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))
+            .unwrap();
+        let job_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(memory_count, 1);
+        assert_eq!(job_count, 1);
+    }
+
+    #[test]
+    fn duplicate_memory_rolls_back_job_insert() {
+        let persistence = SqliteStorePersistence::in_memory().unwrap();
+        let timestamp = Timestamp::from_unix_millis(10);
+        let memory = Memory::new(
+            MemoryId::new(),
+            "hello".to_owned(),
+            MemorySource::DirectInput,
+            timestamp,
+            timestamp,
+        )
+        .unwrap();
+        let first_job = Job::new(
+            JobId::new(),
+            JobKind::GenerateEmbedding {
+                memory_id: memory.id(),
+            },
+            timestamp,
+        );
+        let second_job = Job::new(
+            JobId::new(),
+            JobKind::GenerateEmbedding {
+                memory_id: memory.id(),
+            },
+            timestamp,
+        );
+
+        persistence.persist(&memory, &first_job).unwrap();
+        assert!(persistence.persist(&memory, &second_job).is_err());
+
+        let job_count: i64 = persistence
+            .database
+            .connection()
+            .query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(job_count, 1);
     }
 }

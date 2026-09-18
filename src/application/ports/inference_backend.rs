@@ -5,9 +5,7 @@
 
 use std::fmt;
 
-use crate::domain::{
-    EmbeddingRequest, EmbeddingResponse, GenerationRequest, GenerationResponse,
-};
+use crate::domain::{EmbeddingRequest, EmbeddingResponse, GenerationRequest, GenerationResponse};
 
 /// Failure returned by an inference backend.
 #[derive(Debug)]
@@ -39,11 +37,18 @@ pub trait InferenceBackend {
     /// Generates language from the question and explicitly supplied context.
     ///
     /// The backend must not perform additional memory retrieval.
-    fn generate(
-        &self,
-        request: &GenerationRequest,
-    ) -> Result<GenerationResponse, InferenceError>;
+    fn generate(&self, request: &GenerationRequest) -> Result<GenerationResponse, InferenceError>;
 
     /// Generates an embedding for one canonical memory.
     fn embed(&self, request: &EmbeddingRequest) -> Result<EmbeddingResponse, InferenceError>;
+}
+
+impl<T: InferenceBackend + ?Sized> InferenceBackend for std::sync::Arc<T> {
+    fn generate(&self, request: &GenerationRequest) -> Result<GenerationResponse, InferenceError> {
+        (**self).generate(request)
+    }
+
+    fn embed(&self, request: &EmbeddingRequest) -> Result<EmbeddingResponse, InferenceError> {
+        (**self).embed(request)
+    }
 }

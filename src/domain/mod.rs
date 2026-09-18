@@ -13,7 +13,9 @@ mod source;
 pub use inference::{
     EmbeddingRequest, EmbeddingResponse, GenerationRequest, GenerationResponse, InferenceModel,
 };
-pub use job::{InvalidJobTransition, Job, JobId, JobKind, JobState};
+pub use job::{InvalidJobTransition, Job, JobId, JobKind, JobState, JobValidationError};
 pub use memory::{Memory, MemoryId, MemoryValidationError, Timestamp};
-pub use search::{Relevance, RetrievedMemory, SearchQuery, SearchQueryError, SearchResult, SearchScore};
+pub use search::{
+    Relevance, RetrievedMemory, SearchQuery, SearchQueryError, SearchResult, SearchScore,
+};
 pub use source::MemorySource;

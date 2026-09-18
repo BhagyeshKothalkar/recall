@@ -68,11 +68,47 @@ pub struct InvalidJobTransition {
 
 impl fmt::Display for InvalidJobTransition {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "invalid job transition: {:?} -> {:?}", self.from, self.to)
+        write!(
+            formatter,
+            "invalid job transition: {:?} -> {:?}",
+            self.from, self.to
+        )
     }
 }
 
 impl std::error::Error for InvalidJobTransition {}
+
+/// Invalid persisted job state reconstructed from storage.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum JobValidationError {
+    /// A job's update timestamp predates its creation timestamp.
+    InvalidTimestampOrder {
+        created_at: Timestamp,
+        updated_at: Timestamp,
+    },
+    /// Failed jobs must retain a diagnostic.
+    FailedJobMissingError,
+    /// Non-failed jobs must not retain a stale diagnostic.
+    UnexpectedError,
+}
+
+impl fmt::Display for JobValidationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidTimestampOrder {
+                created_at,
+                updated_at,
+            } => write!(
+                formatter,
+                "job updated_at ({updated_at}) cannot precede created_at ({created_at})"
+            ),
+            Self::FailedJobMissingError => formatter.write_str("failed job has no error"),
+            Self::UnexpectedError => formatter.write_str("non-failed job has an error"),
+        }
+    }
+}
+
+impl std::error::Error for JobValidationError {}
 
 /// Durable description of one unit of background derivation work.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -98,6 +134,39 @@ impl Job {
             attempts: 0,
             last_error: None,
         }
+    }
+
+    /// Reconstructs a job from persisted state after validating invariants.
+    pub fn from_persisted(
+        id: JobId,
+        kind: JobKind,
+        state: JobState,
+        created_at: Timestamp,
+        updated_at: Timestamp,
+        attempts: u32,
+        last_error: Option<String>,
+    ) -> Result<Self, JobValidationError> {
+        if updated_at < created_at {
+            return Err(JobValidationError::InvalidTimestampOrder {
+                created_at,
+                updated_at,
+            });
+        }
+        if state == JobState::Failed && last_error.is_none() {
+            return Err(JobValidationError::FailedJobMissingError);
+        }
+        if state != JobState::Failed && last_error.is_some() {
+            return Err(JobValidationError::UnexpectedError);
+        }
+        Ok(Self {
+            id,
+            kind,
+            state,
+            created_at,
+            updated_at,
+            attempts,
+            last_error,
+        })
     }
 
     /// Returns the stable job identifier.
@@ -150,11 +219,7 @@ impl Job {
     }
 
     /// Marks a running job as failed and records the backend/application error.
-    pub fn fail(
-        &mut self,
-        now: Timestamp,
-        error: String,
-    ) -> Result<(), InvalidJobTransition> {
+    pub fn fail(&mut self, now: Timestamp, error: String) -> Result<(), InvalidJobTransition> {
         self.transition_to(JobState::Failed, now)?;
         self.last_error = Some(error);
         Ok(())
@@ -165,7 +230,11 @@ impl Job {
         self.transition_to(JobState::Pending, now)
     }
 
-    fn transition_to(&mut self, next: JobState, now: Timestamp) -> Result<(), InvalidJobTransition> {
+    fn transition_to(
+        &mut self,
+        next: JobState,
+        now: Timestamp,
+    ) -> Result<(), InvalidJobTransition> {
         if !is_valid_transition(self.state, next) {
             return Err(InvalidJobTransition {
                 from: self.state,
@@ -237,8 +306,11 @@ mod tests {
     fn failed_job_can_be_requeued() {
         let mut job = job();
         job.start(Timestamp::from_unix_millis(20)).unwrap();
-        job.fail(Timestamp::from_unix_millis(30), "model unavailable".to_owned())
-            .unwrap();
+        job.fail(
+            Timestamp::from_unix_millis(30),
+            "model unavailable".to_owned(),
+        )
+        .unwrap();
         assert_eq!(job.last_error(), Some("model unavailable"));
 
         job.retry(Timestamp::from_unix_millis(40)).unwrap();

@@ -4,9 +4,7 @@ use std::{fmt, io, os::unix::net::UnixStream, path::Path};
 
 use serde::{de::DeserializeOwned, Serialize};
 
-use super::protocol::{Request, Response};
-
-const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
+use super::protocol::{Request, Response, MAX_MESSAGE_BYTES};
 
 /// Errors produced while communicating with the daemon.
 #[derive(Debug)]
@@ -69,8 +67,7 @@ fn read_json<T: DeserializeOwned>(stream: &mut UnixStream) -> Result<T, IpcClien
             "IPC message exceeds maximum size".to_owned(),
         ));
     }
-    serde_json::from_slice(&bytes)
-        .map_err(|error| IpcClientError::Serialization(error.to_string()))
+    serde_json::from_slice(&bytes).map_err(|error| IpcClientError::Serialization(error.to_string()))
 }
 
 fn write_json<T: Serialize>(stream: &mut UnixStream, value: &T) -> Result<(), IpcClientError> {

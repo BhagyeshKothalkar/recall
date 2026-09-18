@@ -1444,6 +1444,7 @@ Requests:
 Request::Store
 Request::Ask
 Request::Status
+Request::Stop
 ```
 
 Responses:
@@ -1453,6 +1454,7 @@ Response::Store
 Response::Answer
 Response::Retrieved
 Response::Status
+Response::Stopped
 Response::Error
 ```
 
@@ -1741,13 +1743,16 @@ Operational subcommands currently include:
 recall store <input>
 recall daemon
 recall status
+recall start
+recall stop
 ```
 
 `StoreArgs` contains one input string.
 
-`DaemonArgs` contains database and socket paths.
+`DaemonArgs` contains an optional database path. The socket path is a global
+client/daemon option so all commands can address the same daemon.
 
-`StatusArgs` contains a socket path.
+`StatusArgs` has no command-specific arguments.
 
 ---
 
@@ -2387,11 +2392,12 @@ These boundaries are represented directly by Rust traits, structs, and module ow
 
 # 56. Current Non-Core/Incomplete Operational Surface
 
-The primary store and ask flows are implemented.
+The primary store, ask, retrieval-only, status, and daemon lifecycle flows are
+implemented.
 
-The current `status` wire command exists structurally, but the server still treats it as unsupported rather than implementing a complete status application use case.
-
-The command exists so the protocol shape does not need to be invented later, but it is not currently a completed operational feature.
+The status response reports daemon readiness, derivation-job counts, and
+inference configuration readiness. `recall stop` performs a graceful IPC
+shutdown and stops the background worker.
 
 Likewise, the current implementation does not add future commands such as:
 

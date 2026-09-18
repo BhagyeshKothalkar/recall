@@ -56,7 +56,10 @@ impl GenerationRequest {
 
     /// Returns the memory identities supplied as generation context.
     pub fn source_ids(&self) -> Vec<MemoryId> {
-        self.context.iter().map(RetrievedMemory::memory_id).collect()
+        self.context
+            .iter()
+            .map(RetrievedMemory::memory_id)
+            .collect()
     }
 }
 
@@ -131,7 +134,7 @@ pub struct EmbeddingResponse {
 impl EmbeddingResponse {
     /// Creates an embedding response, rejecting an empty vector.
     pub fn new(memory_id: MemoryId, model: InferenceModel, vector: Vec<f32>) -> Option<Self> {
-        if vector.is_empty() || vector.iter().any(|value| value.is_nan()) {
+        if vector.is_empty() || vector.iter().any(|value| !value.is_finite()) {
             None
         } else {
             Some(Self {

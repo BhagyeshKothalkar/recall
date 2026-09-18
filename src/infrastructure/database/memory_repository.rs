@@ -85,7 +85,10 @@ impl MemoryRepository for SqliteMemoryRepository {
 
     fn delete(&self, id: MemoryId) -> Result<(), MemoryRepositoryError> {
         self.connection()
-            .execute("DELETE FROM memories WHERE id = ?1", params![id.to_string()])
+            .execute(
+                "DELETE FROM memories WHERE id = ?1",
+                params![id.to_string()],
+            )
             .map(|_| ())
             .map_err(storage_error)
     }
@@ -108,11 +111,7 @@ fn source_value(source: &MemorySource) -> Option<String> {
 fn read_memory(row: &rusqlite::Row<'_>) -> rusqlite::Result<Memory> {
     let id = row.get::<_, String>(0)?;
     let id = uuid::Uuid::parse_str(&id).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(
-            0,
-            rusqlite::types::Type::Text,
-            Box::new(error),
-        )
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
     })?;
 
     let content = row.get::<_, String>(1)?;
@@ -135,14 +134,16 @@ fn read_memory(row: &rusqlite::Row<'_>) -> rusqlite::Result<Memory> {
         }
     };
 
-    Memory::new(MemoryId::from_uuid(id), content, source, created_at, updated_at)
-        .map_err(|error| {
-            rusqlite::Error::FromSqlConversionFailure(
-                1,
-                rusqlite::types::Type::Text,
-                Box::new(error),
-            )
-        })
+    Memory::new(
+        MemoryId::from_uuid(id),
+        content,
+        source,
+        created_at,
+        updated_at,
+    )
+    .map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(error))
+    })
 }
 
 fn storage_error(error: rusqlite::Error) -> MemoryRepositoryError {

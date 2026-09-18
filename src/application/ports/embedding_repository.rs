@@ -14,7 +14,9 @@ pub enum EmbeddingRepositoryError {
 impl fmt::Display for EmbeddingRepositoryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Storage(error) => write!(formatter, "embedding repository storage error: {error}"),
+            Self::Storage(error) => {
+                write!(formatter, "embedding repository storage error: {error}")
+            }
         }
     }
 }

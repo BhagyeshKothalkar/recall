@@ -53,7 +53,10 @@ pub struct SearchScore(f32);
 impl SearchScore {
     /// Creates a score, rejecting NaN because it cannot be ordered reliably.
     pub fn new(value: f32) -> Option<Self> {
-        value.is_nan().then_some(()).map_or(Some(Self(value)), |_| None)
+        value
+            .is_nan()
+            .then_some(())
+            .map_or(Some(Self(value)), |_| None)
     }
 
     /// Returns the numeric score.

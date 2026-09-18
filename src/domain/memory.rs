@@ -173,7 +173,10 @@ mod tests {
     use super::*;
 
     fn timestamps() -> (Timestamp, Timestamp) {
-        (Timestamp::from_unix_millis(10), Timestamp::from_unix_millis(20))
+        (
+            Timestamp::from_unix_millis(10),
+            Timestamp::from_unix_millis(20),
+        )
     }
 
     #[test]

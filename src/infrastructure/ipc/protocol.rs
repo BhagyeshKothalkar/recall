@@ -6,6 +6,13 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Maximum serialized size of one IPC request or response.
+///
+/// This is intentionally larger than the 16 MiB canonical-memory limit so
+/// JSON framing and request metadata do not reject a valid maximum-sized
+/// memory before the application can validate it.
+pub const MAX_MESSAGE_BYTES: usize = 32 * 1024 * 1024;
+
 /// Request sent from a Recall client to the daemon.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", content = "payload")]
@@ -16,6 +23,8 @@ pub enum Request {
     Ask(AskRequest),
     /// Request daemon status.
     Status(StatusRequest),
+    /// Request a graceful daemon shutdown.
+    Stop(StopRequest),
 }
 
 /// Input crossing the IPC boundary for a store operation.
@@ -48,6 +57,10 @@ pub struct AskRequest {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct StatusRequest;
 
+/// Stop request.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct StopRequest;
+
 /// Response returned by the daemon.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", content = "payload")]
@@ -60,6 +73,8 @@ pub enum Response {
     Retrieved(RetrievedResponse),
     /// Successful status operation.
     Status(StatusResponse),
+    /// Successful shutdown request.
+    Stopped,
     /// Application or runtime failure.
     Error(RemoteError),
 }
@@ -100,6 +115,29 @@ pub struct RetrievedMemoryResponse {
     pub score: f32,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{Response, RetrievedMemoryResponse, RetrievedResponse};
+
+    #[test]
+    fn retrieval_response_serializes_structured_memory_fields() {
+        let response = Response::Retrieved(RetrievedResponse {
+            memories: vec![RetrievedMemoryResponse {
+                memory_id: "memory-1".to_owned(),
+                content: "Rust uses ownership.".to_owned(),
+                score: 0.75,
+            }],
+        });
+
+        let json = serde_json::to_string(&response).unwrap();
+
+        assert!(json.contains("\"type\":\"Retrieved\""));
+        assert!(json.contains("\"memory_id\":\"memory-1\""));
+        assert!(json.contains("\"content\":\"Rust uses ownership.\""));
+        assert!(json.contains("\"score\":0.75"));
+    }
+}
+
 /// Current daemon status.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct StatusResponse {
@@ -107,6 +145,18 @@ pub struct StatusResponse {
     pub ready: bool,
     /// Time at which this status was produced.
     pub checked_at_unix_millis: i64,
+    /// Number of pending derivation jobs.
+    pub pending_jobs: u64,
+    /// Number of running derivation jobs.
+    pub running_jobs: u64,
+    /// Number of completed derivation jobs.
+    pub completed_jobs: u64,
+    /// Number of failed derivation jobs.
+    pub failed_jobs: u64,
+    /// Whether the configured inference backend is available.
+    pub inference_ready: bool,
+    /// Optional inference diagnostic.
+    pub inference_error: Option<String>,
 }
 
 /// Error represented on the internal wire protocol.

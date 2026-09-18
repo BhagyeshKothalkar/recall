@@ -2,8 +2,8 @@
 
 use std::{fmt, fs, path::PathBuf};
 
-use super::ports::{Clock, MemoryRepository, MemoryRepositoryError};
-use crate::domain::{Memory, MemoryId, MemorySource};
+use super::ports::{Clock, StorePersistence, StorePersistenceError};
+use crate::domain::{Job, JobKind, Memory, MemoryId, MemorySource};
 
 /// Input supplied to the store use case.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -61,8 +61,8 @@ pub enum StoreError {
     },
     /// Canonical memory construction failed its domain invariants.
     InvalidMemory(crate::domain::MemoryValidationError),
-    /// Canonical persistence failed.
-    Repository(MemoryRepositoryError),
+    /// Canonical memory and derivation-job persistence failed.
+    Persistence(StorePersistenceError),
 }
 
 impl fmt::Display for StoreError {
@@ -77,39 +77,36 @@ impl fmt::Display for StoreError {
                 write!(formatter, "failed to read {}: {source}", path.display())
             }
             Self::InvalidMemory(error) => write!(formatter, "invalid memory: {error}"),
-            Self::Repository(error) => write!(formatter, "failed to persist memory: {error}"),
+            Self::Persistence(error) => write!(formatter, "failed to persist memory: {error}"),
         }
     }
 }
 
 impl std::error::Error for StoreError {}
 
-impl From<MemoryRepositoryError> for StoreError {
-    fn from(error: MemoryRepositoryError) -> Self {
-        Self::Repository(error)
+impl From<StorePersistenceError> for StoreError {
+    fn from(error: StorePersistenceError) -> Self {
+        Self::Persistence(error)
     }
 }
 
 /// Application use case for canonical memory capture and persistence.
 ///
-/// The first vertical slice intentionally stops after canonical persistence.
-/// Background derivation jobs are a subsequent stage in the implementation
-/// sequence, so storing a memory does not require a job repository yet.
-pub struct StoreMemory<R, C> {
-    repository: R,
+pub struct StoreMemory<P, C> {
+    persistence: P,
     clock: C,
     limits: MemoryLimits,
 }
 
-impl<R, C> StoreMemory<R, C>
+impl<P, C> StoreMemory<P, C>
 where
-    R: MemoryRepository,
+    P: StorePersistence,
     C: Clock,
 {
-    /// Creates a store use case with explicit persistence, clock, and limits.
-    pub const fn new(repository: R, clock: C, limits: MemoryLimits) -> Self {
+    /// Creates a store use case with atomic persistence, clock, and limits.
+    pub const fn new(persistence: P, clock: C, limits: MemoryLimits) -> Self {
         Self {
-            repository,
+            persistence,
             clock,
             limits,
         }
@@ -123,12 +120,19 @@ where
         let now = self.clock.now();
         let memory = Memory::new(MemoryId::new(), content, source, now, now)
             .map_err(StoreError::InvalidMemory)?;
+        let job = Job::new(
+            crate::domain::JobId::new(),
+            JobKind::GenerateEmbedding {
+                memory_id: memory.id(),
+            },
+            now,
+        );
         let response = StoreResponse {
             memory_id: memory.id(),
             content_length: memory.content().len(),
         };
 
-        self.repository.create(&memory)?;
+        self.persistence.persist(&memory, &job)?;
         Ok(response)
     }
 }
@@ -180,22 +184,15 @@ mod tests {
     #[derive(Default)]
     struct MemoryStore {
         memories: RefCell<HashMap<MemoryId, Memory>>,
+        jobs: RefCell<Vec<Job>>,
     }
 
-    impl MemoryRepository for &MemoryStore {
-        fn create(&self, memory: &Memory) -> Result<(), MemoryRepositoryError> {
+    impl StorePersistence for &MemoryStore {
+        fn persist(&self, memory: &Memory, job: &Job) -> Result<(), StorePersistenceError> {
             self.memories
                 .borrow_mut()
                 .insert(memory.id(), memory.clone());
-            Ok(())
-        }
-
-        fn get(&self, id: MemoryId) -> Result<Option<Memory>, MemoryRepositoryError> {
-            Ok(self.memories.borrow().get(&id).cloned())
-        }
-
-        fn delete(&self, id: MemoryId) -> Result<(), MemoryRepositoryError> {
-            self.memories.borrow_mut().remove(&id);
+            self.jobs.borrow_mut().push(job.clone());
             Ok(())
         }
     }
@@ -224,6 +221,11 @@ mod tests {
         assert_eq!(memory.content(), "hello");
         assert_eq!(memory.source(), &MemorySource::DirectInput);
         assert_eq!(response.content_length(), 5);
+        assert_eq!(store.jobs.borrow().len(), 1);
+        assert_eq!(
+            store.jobs.borrow()[0].state(),
+            crate::domain::JobState::Pending
+        );
     }
 
     #[test]

@@ -9,7 +9,7 @@ use crate::infrastructure::ipc::protocol::StoreInput;
 pub fn store_input(argument: String) -> StoreInput {
     let path = PathBuf::from(&argument);
     if path.is_file() {
-        StoreInput::File(path)
+        StoreInput::File(std::fs::canonicalize(&path).unwrap_or(path))
     } else {
         StoreInput::Text(argument)
     }
@@ -24,7 +24,10 @@ mod tests {
         let path = std::env::temp_dir().join(format!("recall-cli-test-{}", std::process::id()));
         std::fs::write(&path, "hello").unwrap();
 
-        assert_eq!(store_input(path.to_string_lossy().into_owned()), StoreInput::File(path.clone()));
+        assert_eq!(
+            store_input(path.to_string_lossy().into_owned()),
+            StoreInput::File(path.clone())
+        );
         std::fs::remove_file(path).unwrap();
     }
 

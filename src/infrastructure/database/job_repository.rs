@@ -55,29 +55,41 @@ impl JobRepository for SqliteJobRepository {
     fn claim_pending(&self, now: Timestamp) -> Result<Option<Job>, JobRepositoryError> {
         let connection = self.database.connection();
         let tx = connection.unchecked_transaction().map_err(storage_error)?;
-        let id = tx.query_row(
-            "SELECT id FROM jobs WHERE state = 'pending' ORDER BY created_at ASC LIMIT 1",
-            [],
-            |row| row.get::<_, String>(0),
-        ).optional().map_err(storage_error)?;
+        let id = tx
+            .query_row(
+                "SELECT id FROM jobs WHERE state = 'pending' ORDER BY created_at ASC LIMIT 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(storage_error)?;
 
         let Some(id) = id else {
             tx.commit().map_err(storage_error)?;
             return Ok(None);
         };
 
-        tx.execute(
-            "UPDATE jobs SET state = 'running', attempts = attempts + 1, updated_at = ?2
+        let changed = tx
+            .execute(
+                "UPDATE jobs SET state = 'running', attempts = attempts + 1, updated_at = ?2
              WHERE id = ?1 AND state = 'pending'",
-            params![id, now.as_unix_millis()],
-        ).map_err(storage_error)?;
+                params![id, now.as_unix_millis()],
+            )
+            .map_err(storage_error)?;
 
-        let job = tx.query_row(
-            "SELECT id, kind, memory_id, state, attempts, created_at, updated_at, last_error
+        if changed != 1 {
+            tx.commit().map_err(storage_error)?;
+            return Ok(None);
+        }
+
+        let job = tx
+            .query_row(
+                "SELECT id, kind, memory_id, state, attempts, created_at, updated_at, last_error
              FROM jobs WHERE id = ?1",
-            params![id],
-            read_job,
-        ).map_err(storage_error)?;
+                params![id],
+                read_job,
+            )
+            .map_err(storage_error)?;
         tx.commit().map_err(storage_error)?;
         Ok(Some(job))
     }
@@ -94,42 +106,132 @@ impl JobRepository for SqliteJobRepository {
             ],
         ).map_err(storage_error)?;
         if changed == 0 {
-            return Err(JobRepositoryError::Storage(Box::new(std::io::Error::new(std::io::ErrorKind::NotFound, "job does not exist"))));
+            return Err(JobRepositoryError::Storage(Box::new(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "job does not exist",
+            ))));
         }
         Ok(())
     }
 
     fn get(&self, id: JobId) -> Result<Option<Job>, JobRepositoryError> {
-        self.database.connection().query_row(
-            "SELECT id, kind, memory_id, state, attempts, created_at, updated_at, last_error
+        self.database
+            .connection()
+            .query_row(
+                "SELECT id, kind, memory_id, state, attempts, created_at, updated_at, last_error
              FROM jobs WHERE id = ?1",
-            params![id.to_string()],
-            read_job,
-        ).optional().map_err(storage_error)
+                params![id.to_string()],
+                read_job,
+            )
+            .optional()
+            .map_err(storage_error)
     }
 
     fn list_by_state(&self, state: JobState) -> Result<Vec<Job>, JobRepositoryError> {
-        let mut statement = self.database.connection().prepare(
-            "SELECT id, kind, memory_id, state, attempts, created_at, updated_at, last_error
+        let mut statement = self
+            .database
+            .connection()
+            .prepare(
+                "SELECT id, kind, memory_id, state, attempts, created_at, updated_at, last_error
              FROM jobs WHERE state = ?1 ORDER BY created_at ASC",
-        ).map_err(storage_error)?;
-        let rows = statement.query_map(params![state_name(state)], read_job).map_err(storage_error)?;
+            )
+            .map_err(storage_error)?;
+        let rows = statement
+            .query_map(params![state_name(state)], read_job)
+            .map_err(storage_error)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(storage_error)
     }
 }
 
 fn read_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<Job> {
-    let id = JobId::from_uuid(uuid::Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|error| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error)))?);
+    let id = JobId::from_uuid(uuid::Uuid::parse_str(&row.get::<_, String>(0)?).map_err(
+        |error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        },
+    )?);
     let kind_name = row.get::<_, String>(1)?;
-    let memory_id = MemoryId::from_uuid(uuid::Uuid::parse_str(&row.get::<_, String>(2)?).map_err(|error| rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(error)))?);
-    let kind = match kind_name.as_str() { "generate_embedding" => JobKind::GenerateEmbedding { memory_id }, _ => return Err(rusqlite::Error::InvalidColumnType(1, "kind".into(), rusqlite::types::Type::Text)) };
-    let state = match row.get::<_, String>(3)?.as_str() { "pending" => JobState::Pending, "running" => JobState::Running, "completed" => JobState::Completed, "failed" => JobState::Failed, _ => return Err(rusqlite::Error::InvalidColumnType(3, "state".into(), rusqlite::types::Type::Text)) };
-    Job::from_persisted(id, kind, state, Timestamp::from_unix_millis(row.get(5)?), Timestamp::from_unix_millis(row.get(6)?), row.get::<_, i64>(4)? as u32, row.get(7)?).map_err(|error| rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(error)))
+    let memory_id = MemoryId::from_uuid(uuid::Uuid::parse_str(&row.get::<_, String>(2)?).map_err(
+        |error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                2,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        },
+    )?);
+    let kind = match kind_name.as_str() {
+        "generate_embedding" => JobKind::GenerateEmbedding { memory_id },
+        _ => {
+            return Err(rusqlite::Error::InvalidColumnType(
+                1,
+                "kind".into(),
+                rusqlite::types::Type::Text,
+            ))
+        }
+    };
+    let state = match row.get::<_, String>(3)?.as_str() {
+        "pending" => JobState::Pending,
+        "running" => JobState::Running,
+        "completed" => JobState::Completed,
+        "failed" => JobState::Failed,
+        _ => {
+            return Err(rusqlite::Error::InvalidColumnType(
+                3,
+                "state".into(),
+                rusqlite::types::Type::Text,
+            ))
+        }
+    };
+    let attempts = u32::try_from(row.get::<_, i64>(4)?).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            4,
+            rusqlite::types::Type::Integer,
+            Box::new(error),
+        )
+    })?;
+    Job::from_persisted(
+        id,
+        kind,
+        state,
+        Timestamp::from_unix_millis(row.get(5)?),
+        Timestamp::from_unix_millis(row.get(6)?),
+        attempts,
+        row.get(7)?,
+    )
+    .map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(error))
+    })
 }
 
-fn kind_name(kind: JobKind) -> &'static str { match kind { JobKind::GenerateEmbedding { .. } => "generate_embedding" } }
-fn memory_id(kind: JobKind) -> MemoryId { match kind { JobKind::GenerateEmbedding { memory_id } => memory_id } }
-fn state_name(state: JobState) -> &'static str { match state { JobState::Pending => "pending", JobState::Running => "running", JobState::Completed => "completed", JobState::Failed => "failed" } }
-fn storage_error(error: rusqlite::Error) -> JobRepositoryError { JobRepositoryError::Storage(Box::new(error)) }
+fn kind_name(kind: JobKind) -> &'static str {
+    match kind {
+        JobKind::GenerateEmbedding { .. } => "generate_embedding",
+    }
+}
+fn memory_id(kind: JobKind) -> MemoryId {
+    match kind {
+        JobKind::GenerateEmbedding { memory_id } => memory_id,
+    }
+}
+fn state_name(state: JobState) -> &'static str {
+    match state {
+        JobState::Pending => "pending",
+        JobState::Running => "running",
+        JobState::Completed => "completed",
+        JobState::Failed => "failed",
+    }
+}
+fn storage_error(error: rusqlite::Error) -> JobRepositoryError {
+    JobRepositoryError::Storage(Box::new(error))
+}
 
-impl fmt::Debug for SqliteJobRepository { fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.debug_struct("SqliteJobRepository").finish_non_exhaustive() } }
+impl fmt::Debug for SqliteJobRepository {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SqliteJobRepository")
+            .finish_non_exhaustive()
+    }
+}

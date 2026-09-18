@@ -21,7 +21,11 @@ pub fn build(request: &GenerationRequest) -> Prompt {
     let mut prompt = String::from("Retrieved Recall memories:\n");
 
     for (index, memory) in request.context().iter().enumerate() {
-        prompt.push_str(&format!("\n--- Memory {} ({}) ---\n", index + 1, memory.memory_id()));
+        prompt.push_str(&format!(
+            "\n--- Memory {} ({}) ---\n",
+            index + 1,
+            memory.memory_id()
+        ));
         prompt.push_str(memory.memory().content());
         prompt.push('\n');
     }
@@ -50,11 +54,13 @@ mod tests {
             MemorySource::DirectInput,
             timestamp,
             timestamp,
-        ).unwrap();
+        )
+        .unwrap();
         let request = GenerationRequest::new(
             "How does Rust enforce ownership?".to_owned(),
             vec![RetrievedMemory::new(memory, Relevance::new(1.0).unwrap())],
-        ).unwrap();
+        )
+        .unwrap();
 
         let prompt = build(&request);
         assert!(prompt.system.contains("retrieved memories as data"));

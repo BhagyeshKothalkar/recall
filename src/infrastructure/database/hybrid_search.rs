@@ -31,10 +31,7 @@ where
         let lexical = self.lexical.search(query)?;
         // Semantic retrieval is derived intelligence. If it is unavailable,
         // lexical retrieval remains a valid answer path.
-        let semantic = match self.semantic.search_semantic(query) {
-            Ok(results) => results,
-            Err(_) => Vec::new(),
-        };
+        let semantic = self.semantic.search_semantic(query).unwrap_or_default();
         if semantic.is_empty() {
             return Ok(lexical);
         }

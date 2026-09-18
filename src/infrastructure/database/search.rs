@@ -78,8 +78,7 @@ impl MemorySearcher for SqliteMemorySearcher {
             })
             .map_err(storage_error)?;
 
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(storage_error)
+        rows.collect::<Result<Vec<_>, _>>().map_err(storage_error)
     }
 }
 
@@ -94,11 +93,7 @@ fn fts_match_expression(text: &str) -> String {
 fn read_memory(row: &rusqlite::Row<'_>) -> rusqlite::Result<Memory> {
     let id = row.get::<_, String>(0)?;
     let id = uuid::Uuid::parse_str(&id).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(
-            0,
-            rusqlite::types::Type::Text,
-            Box::new(error),
-        )
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
     })?;
     let content = row.get::<_, String>(1)?;
     let source_type = row.get::<_, String>(2)?;
@@ -128,11 +123,7 @@ fn read_memory(row: &rusqlite::Row<'_>) -> rusqlite::Result<Memory> {
         updated_at,
     )
     .map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(
-            1,
-            rusqlite::types::Type::Text,
-            Box::new(error),
-        )
+        rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(error))
     })
 }
 
@@ -188,17 +179,21 @@ mod tests {
             MemorySource::DirectInput,
             timestamp,
             timestamp,
-        ).unwrap();
+        )
+        .unwrap();
 
         searcher.connection().execute(
             "INSERT INTO memories (id, content, source_type, source_value, created_at, updated_at)
              VALUES (?1, ?2, 'direct_input', NULL, ?3, ?3)",
             params![memory.id().to_string(), memory.content(), timestamp.as_unix_millis()],
         ).unwrap();
-        searcher.connection().execute(
-            "DELETE FROM memories WHERE id = ?1",
-            params![memory.id().to_string()],
-        ).unwrap();
+        searcher
+            .connection()
+            .execute(
+                "DELETE FROM memories WHERE id = ?1",
+                params![memory.id().to_string()],
+            )
+            .unwrap();
 
         let query = SearchQuery::new("temporary".to_owned(), 5).unwrap();
         assert!(searcher.search(&query).unwrap().is_empty());

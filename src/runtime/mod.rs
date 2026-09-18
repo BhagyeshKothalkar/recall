@@ -2,3 +2,5 @@
 
 pub mod composition;
 pub mod daemon;
+pub mod paths;
+pub mod worker;

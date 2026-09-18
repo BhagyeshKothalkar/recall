@@ -16,6 +16,10 @@ pub struct Cli {
     #[arg(long)]
     pub no_ai: bool,
 
+    /// Unix-domain socket path used by client commands and the daemon.
+    #[arg(long, global = true)]
+    pub socket: Option<PathBuf>,
+
     /// Explicit operational command, when one is required.
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -30,6 +34,10 @@ pub enum Command {
     Daemon(DaemonArgs),
     /// Query daemon status.
     Status(StatusArgs),
+    /// Start the Recall daemon in the background.
+    Start(DaemonArgs),
+    /// Stop the running Recall daemon.
+    Stop(StopArgs),
 }
 
 /// Arguments for `recall store`.
@@ -43,18 +51,14 @@ pub struct StoreArgs {
 #[derive(Debug, Args)]
 pub struct DaemonArgs {
     /// SQLite database path.
-    #[arg(long, default_value = "recall.db")]
-    pub database: PathBuf,
-
-    /// Unix-domain socket path.
-    #[arg(long, default_value = "recall.sock")]
-    pub socket: PathBuf,
+    #[arg(long)]
+    pub database: Option<PathBuf>,
 }
 
 /// Arguments for `recall status`.
 #[derive(Debug, Args)]
-pub struct StatusArgs {
-    /// Unix-domain socket path.
-    #[arg(long, default_value = "recall.sock")]
-    pub socket: PathBuf,
-}
+pub struct StatusArgs {}
+
+/// Arguments for `recall stop`.
+#[derive(Debug, Args)]
+pub struct StopArgs {}

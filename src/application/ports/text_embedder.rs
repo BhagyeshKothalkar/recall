@@ -12,5 +12,7 @@ pub trait TextEmbedder {
 }
 
 impl<T: TextEmbedder + ?Sized> TextEmbedder for std::sync::Arc<T> {
-    fn embed_text(&self, text: &str, model: &InferenceModel) -> Result<Vec<f32>, InferenceError> { (**self).embed_text(text, model) }
+    fn embed_text(&self, text: &str, model: &InferenceModel) -> Result<Vec<f32>, InferenceError> {
+        (**self).embed_text(text, model)
+    }
 }

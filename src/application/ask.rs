@@ -55,16 +55,40 @@ impl fmt::Display for AskRequestError {
 impl std::error::Error for AskRequestError {}
 
 /// Application-level answer returned after retrieval and generation.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Answer {
     text: String,
     sources: Vec<MemoryId>,
+    retrieved: Option<Vec<RetrievedMemoryAnswer>>,
 }
 
 impl Answer {
     /// Creates an answer from generated text and application-owned provenance.
     fn new(text: String, sources: Vec<MemoryId>) -> Self {
-        Self { text, sources }
+        Self {
+            text,
+            sources,
+            retrieved: None,
+        }
+    }
+
+    /// Creates a retrieval-only answer while retaining the complete scored results.
+    fn from_retrieved(memories: Vec<RetrievedMemoryAnswer>) -> Self {
+        let text = memories
+            .iter()
+            .map(|memory| memory.content())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let sources = memories
+            .iter()
+            .map(RetrievedMemoryAnswer::memory_id)
+            .collect();
+
+        Self {
+            text,
+            sources,
+            retrieved: Some(memories),
+        }
     }
 
     /// Returns generated answer text.
@@ -75,6 +99,44 @@ impl Answer {
     /// Returns canonical memory identities selected by retrieval.
     pub fn sources(&self) -> &[MemoryId] {
         &self.sources
+    }
+
+    /// Returns the structured retrieval results for a retrieval-only answer.
+    pub fn retrieved(&self) -> Option<&[RetrievedMemoryAnswer]> {
+        self.retrieved.as_deref()
+    }
+}
+
+/// One scored memory returned by a retrieval-only ask.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RetrievedMemoryAnswer {
+    memory_id: MemoryId,
+    content: String,
+    score: f32,
+}
+
+impl RetrievedMemoryAnswer {
+    fn new(memory_id: MemoryId, content: String, score: f32) -> Self {
+        Self {
+            memory_id,
+            content,
+            score,
+        }
+    }
+
+    /// Returns the stable canonical memory identity.
+    pub const fn memory_id(&self) -> MemoryId {
+        self.memory_id
+    }
+
+    /// Returns the canonical memory content.
+    pub fn content(&self) -> &str {
+        &self.content
+    }
+
+    /// Returns the retrieval score assigned by the search implementation.
+    pub const fn score(&self) -> f32 {
+        self.score
     }
 }
 
@@ -112,6 +174,7 @@ impl std::error::Error for AskError {}
 /// Application use case for retrieval followed by language generation.
 pub struct AskRecall<S, I> {
     searcher: S,
+    ai_searcher: Option<Box<dyn MemorySearcher>>,
     inference: I,
     retrieval_limit: usize,
 }
@@ -128,6 +191,25 @@ where
         }
         Ok(Self {
             searcher,
+            ai_searcher: None,
+            inference,
+            retrieval_limit,
+        })
+    }
+
+    /// Creates an ask use case with a separate hybrid searcher for AI mode.
+    pub fn with_hybrid(
+        searcher: S,
+        ai_searcher: Box<dyn MemorySearcher>,
+        inference: I,
+        retrieval_limit: usize,
+    ) -> Result<Self, AskConfigError> {
+        if retrieval_limit == 0 {
+            return Err(AskConfigError::ZeroRetrievalLimit);
+        }
+        Ok(Self {
+            searcher,
+            ai_searcher: Some(ai_searcher),
             inference,
             retrieval_limit,
         })
@@ -137,7 +219,15 @@ where
     pub fn execute(&self, request: AskRequest) -> Result<Answer, AskError> {
         let query = SearchQuery::new(request.question().to_owned(), self.retrieval_limit)
             .map_err(|_| AskError::InvalidGenerationRequest)?;
-        let results = self.searcher.search(&query).map_err(AskError::Search)?;
+        let results = if request.use_ai() {
+            self.ai_searcher
+                .as_ref()
+                .map(|searcher| searcher.search(&query))
+                .unwrap_or_else(|| self.searcher.search(&query))
+        } else {
+            self.searcher.search(&query)
+        }
+        .map_err(AskError::Search)?;
         let context = results
             .iter()
             .map(|result| {
@@ -148,15 +238,22 @@ where
             .collect::<Result<Vec<_>, _>>()?;
 
         if !request.use_ai() {
-            let text = context
-                .iter()
-                .map(|memory| memory.memory().content())
-                .collect::<Vec<_>>()
-                .join("\n");
+            let memories = results
+                .into_iter()
+                .map(|result| {
+                    RetrievedMemoryAnswer::new(
+                        result.memory().id(),
+                        result.memory().content().to_owned(),
+                        result.score().value(),
+                    )
+                })
+                .collect();
 
-            let sources = context.iter().map(|memory| memory.memory().id()).collect();
+            return Ok(Answer::from_retrieved(memories));
+        }
 
-            return Ok(Answer::new(text, sources));
+        if context.is_empty() {
+            return Err(AskError::InvalidGenerationRequest);
         }
 
         let generation = GenerationRequest::new(request.question().to_owned(), context)
@@ -213,6 +310,17 @@ mod tests {
         }
     }
 
+    struct EmptySearcher;
+
+    impl MemorySearcher for EmptySearcher {
+        fn search(
+            &self,
+            _query: &SearchQuery,
+        ) -> Result<Vec<crate::domain::SearchResult>, SearchError> {
+            Ok(Vec::new())
+        }
+    }
+
     struct Inference {
         seen: std::cell::RefCell<Option<GenerationRequest>>,
     }
@@ -263,6 +371,41 @@ mod tests {
         assert_eq!(answer.sources(), &[id]);
         let seen = inference.seen.borrow();
         assert_eq!(seen.as_ref().unwrap().source_ids(), vec![id]);
+    }
+
+    #[test]
+    fn retrieval_only_answer_preserves_ids_content_and_scores() {
+        let memory = memory();
+        let id = memory.id();
+        let inference = Inference {
+            seen: std::cell::RefCell::new(None),
+        };
+        let ask = AskRecall::new(Searcher { memory }, &inference, 5).unwrap();
+
+        let answer = ask
+            .execute(AskRequest::new("ownership".to_owned(), false).unwrap())
+            .unwrap();
+
+        let retrieved = answer.retrieved().expect("retrieval-only answer");
+        assert_eq!(retrieved.len(), 1);
+        assert_eq!(retrieved[0].memory_id(), id);
+        assert_eq!(retrieved[0].content(), "Rust uses ownership.");
+        assert_eq!(retrieved[0].score(), 0.75);
+        assert_eq!(answer.sources(), &[id]);
+        assert!(inference.seen.borrow().is_none());
+    }
+
+    #[test]
+    fn ai_with_no_retrieved_context_does_not_invoke_inference() {
+        let inference = Inference {
+            seen: std::cell::RefCell::new(None),
+        };
+        let ask = AskRecall::new(EmptySearcher, &inference, 5).unwrap();
+
+        let result = ask.execute(AskRequest::new("unknown".to_owned(), true).unwrap());
+
+        assert!(matches!(result, Err(AskError::InvalidGenerationRequest)));
+        assert!(inference.seen.borrow().is_none());
     }
 
     #[test]
